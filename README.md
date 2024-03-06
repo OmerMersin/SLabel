@@ -5,7 +5,7 @@ Fast labeling application with automatic labeling, thanks to the help of a pre-t
    git clone git@github.com:OmerMersin/SLabel.git
 
 2. ## Open the downloaded repository.
-   cd slabel-main
+   cd SLabel
 
 3. ## Create a virtual environment 
    python -m venv myenv
@@ -19,4 +19,7 @@ Fast labeling application with automatic labeling, thanks to the help of a pre-t
 
 5. ## Install libraries
    pip install -r requirements.txt
+
+6. ## Run the script
+   python slabel.py
    
