@@ -7,8 +7,19 @@ import math
 from ultralytics import YOLO
 import cv2
 import yaml
+import requests
 
-model_path = os.path.join('yolov8x.pt')
+model_path = 'yolov8x.pt'
+
+# Check if the model file exists locally
+if not os.path.exists(model_path):
+    # Download the model file
+    url = 'https://github.com/ultralytics/assets/releases/download/v8.1.0/yolov8x.pt'
+    response = requests.get(url)
+    with open(model_path, 'wb') as f:
+        f.write(response.content)
+
+# Now you can load the model
 model = YOLO(model_path)
 
 class MovableDialog(QDialog):
@@ -399,6 +410,10 @@ class ImageViewer(QWidget):
         dir_path = QFileDialog.getExistingDirectory(self, 'Select Directory')
         if dir_path:
             self.dir_path = dir_path
+            # Clear the image list
+            self.image_list = []
+            # Clear the list widget
+            self.list_widget.clear()
             self.image_list = [f for f in os.listdir(dir_path) if f.endswith(('.png', '.jpg', '.jpeg'))]
             if not self.image_list:  # If there are no images in the directory
                 return
