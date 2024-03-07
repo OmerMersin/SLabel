@@ -1,4 +1,4 @@
-from PyQt6.QtWidgets import QApplication, QWidget, QVBoxLayout, QPushButton, QFileDialog, QListWidget, QHBoxLayout, QGraphicsView, QGraphicsScene, QGraphicsPixmapItem, QPinchGesture, QGraphicsRectItem, QGraphicsItem, QGraphicsLineItem, QGraphicsTextItem, QInputDialog, QDialog, QLabel, QMessageBox
+from PyQt6.QtWidgets import QApplication, QWidget, QVBoxLayout, QPushButton, QFileDialog, QListWidget, QHBoxLayout, QGraphicsView, QGraphicsScene, QGraphicsPixmapItem, QPinchGesture, QGraphicsRectItem, QGraphicsItem, QGraphicsLineItem, QGraphicsTextItem, QInputDialog, QDialog, QLabel, QMessageBox, QCheckBox
 from PyQt6.QtGui import QPixmap, QPen, QBrush, QColor, QMovie
 from PyQt6.QtCore import Qt, QEvent, QRectF, QPointF, QSizeF, QThread, pyqtSignal, pyqtSlot
 import os
@@ -77,7 +77,10 @@ class DetectionThread(QThread):
                 cv2.putText(frame, results.names[int(class_id)].upper(), (int(x1), int(y1 - 10)),
                             cv2.FONT_HERSHEY_SIMPLEX, 1.3, (0, 255, 0), 3, cv2.LINE_AA)
                 detections.append((x1, y1, x2, y2))
-        os.remove(image_path)
+        try:
+            os.remove(image_path)
+        except:
+            pass
         self.detection_finished.emit(detections)
 
 
@@ -170,6 +173,7 @@ class ImageViewer(QWidget):
                         rect = QRectF(adjusted_start_point, adjusted_current_point).normalized()
                         if rect.width() > 5 and rect.height() > 5:  # Only draw the rectangle if its size is bigger than 5 pixels
                             self.current_rect_item.setRect(rect)
+                            self.current_rect_item.setBrush(QBrush(QColor(255, 0, 0, 127)))  # Fill the rectangle with a semi-transparent red color
                             # Set the parent of the rectangle to be the pixmap item
                             self.current_rect_item.setParentItem(pixmap_item)
             if self.dragMode() != QGraphicsView.DragMode.ScrollHandDrag and not self.meta_key_pressed:
@@ -479,6 +483,11 @@ class ImageViewer(QWidget):
         self.existing_annotations = []
         self.dir_path = None
 
+        self.save_mode = False
+        self.save_mode_checkbox = QCheckBox('Activate Save Mode')
+        self.save_mode_checkbox.stateChanged.connect(self.toggle_save_mode)
+        self.v_layout.addWidget(self.save_mode_checkbox)
+
 
     def open_directory(self):
         dir_path = QFileDialog.getExistingDirectory(self, 'Select Directory')
@@ -494,6 +503,9 @@ class ImageViewer(QWidget):
             self.list_widget.addItems(self.image_list)
             self.show_image(self.dir_path, self.image_list[0])
             self.draw_annotations()  # Draw annotations after opening a directory
+
+    def toggle_save_mode(self):
+        self.save_mode = self.save_mode_checkbox.isChecked()
 
     def show_shortcut_info(self):
         dialog = MovableDialog(self)
@@ -649,6 +661,8 @@ class ImageViewer(QWidget):
             self.show_image(self.dir_path, self.image_list[self.current_image_index])
 
     def show_image(self, dir_path, image_name):
+        if self.save_mode:
+            self.export_annotations()
         self.pixmap = QPixmap(os.path.join(dir_path, image_name))
         self.scene.clear()
         pixmap_item = QGraphicsPixmapItem(self.pixmap)
