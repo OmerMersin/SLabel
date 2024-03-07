@@ -99,6 +99,7 @@ class ImageViewer(QWidget):
             self.image_position = QPointF(0, 0)  # Store the position of the image
             self.chosen_rectangles = []  # Add this line to initialize the list of chosen rectangles
             self.model_downloaded = False
+            self.mouse_toggle = None
 
         def scrollContentsBy(self, dx, dy):
             if self.dragMode() == QGraphicsView.DragMode.ScrollHandDrag:
@@ -114,6 +115,7 @@ class ImageViewer(QWidget):
             self.draw_ghost_lines(self.mapToScene(event.pos()))
 
         def mousePressEvent(self, event):
+            self.mouse_toggle = event.pos()
             # Get the pixmap item
             pixmap_item = None
             for item in reversed(self.scene().items()):
@@ -651,18 +653,20 @@ class ImageViewer(QWidget):
             rectangle.setParentItem(pixmap_item)
 
     def show_prev_image(self):
+        if self.save_mode:
+            self.export_annotations()
         if self.current_image_index > 0:
             self.current_image_index -= 1
             self.show_image(self.dir_path, self.image_list[self.current_image_index])
 
     def show_next_image(self):
+        if self.save_mode:
+            self.export_annotations()
         if self.current_image_index < len(self.image_list) - 1:
             self.current_image_index += 1
             self.show_image(self.dir_path, self.image_list[self.current_image_index])
 
     def show_image(self, dir_path, image_name):
-        if self.save_mode:
-            self.export_annotations()
         self.pixmap = QPixmap(os.path.join(dir_path, image_name))
         self.scene.clear()
         pixmap_item = QGraphicsPixmapItem(self.pixmap)
@@ -675,6 +679,8 @@ class ImageViewer(QWidget):
         self.view.setFocus()  # Set focus on the QGraphicsView instance
 
     def list_item_clicked(self, item):
+        if self.save_mode:
+            self.export_annotations()
         image_name = item.text()
         self.current_image_index = self.image_list.index(image_name)  # Update the current image index
         self.show_image(self.dir_path, image_name)
