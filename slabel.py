@@ -1,26 +1,13 @@
-from PyQt6.QtWidgets import QApplication, QWidget, QVBoxLayout, QPushButton, QFileDialog, QListWidget, QHBoxLayout, QGraphicsView, QGraphicsScene, QGraphicsPixmapItem, QPinchGesture, QGraphicsRectItem, QGraphicsItem, QGraphicsLineItem, QLineEdit, QGraphicsTextItem, QInputDialog, QDialog, QLabel, QMessageBox
-from PyQt6.QtGui import QPixmap, QTransform, QPainter, QWheelEvent, QPen, QBrush, QColor
-from PyQt6.QtCore import QDir, Qt, QEvent, QRectF, QPointF, QSizeF
+from PyQt6.QtWidgets import QApplication, QWidget, QVBoxLayout, QPushButton, QFileDialog, QListWidget, QHBoxLayout, QGraphicsView, QGraphicsScene, QGraphicsPixmapItem, QPinchGesture, QGraphicsRectItem, QGraphicsItem, QGraphicsLineItem, QGraphicsTextItem, QInputDialog, QDialog, QLabel, QMessageBox
+from PyQt6.QtGui import QPixmap, QPen, QBrush, QColor, QMovie
+from PyQt6.QtCore import Qt, QEvent, QRectF, QPointF, QSizeF, QThread, pyqtSignal, pyqtSlot
 import os
 import json
 import math
-from ultralytics import YOLO
 import cv2
 import yaml
 import requests
 
-model_path = 'yolov8x.pt'
-
-# Check if the model file exists locally
-if not os.path.exists(model_path):
-    # Download the model file
-    url = 'https://github.com/ultralytics/assets/releases/download/v8.1.0/yolov8x.pt'
-    response = requests.get(url)
-    with open(model_path, 'wb') as f:
-        f.write(response.content)
-
-# Now you can load the model
-model = YOLO(model_path)
 
 class MovableDialog(QDialog):
     def mousePressEvent(self, event):
@@ -49,6 +36,51 @@ class HoverableGraphicsRectItem(QGraphicsRectItem):
         super().hoverLeaveEvent(event)
 
 
+class DownloadThread(QThread):
+    download_finished = pyqtSignal(object)
+
+    def run(self):
+        from ultralytics import YOLO
+        model_path = 'yolov8x.pt'
+
+        # Check if the model file exists locally
+        if not os.path.exists(model_path):
+            # Download the model file
+            url = 'https://github.com/ultralytics/assets/releases/download/v8.1.0/yolov8x.pt'
+            response = requests.get(url)
+            with open(model_path, 'wb') as f:
+                f.write(response.content)
+
+        # Now you can load the model
+        self.model = YOLO(model_path)
+        self.download_finished.emit(self.model)
+
+class DetectionThread(QThread):
+    detection_finished = pyqtSignal(object)
+
+    def __init__(self, model, img, parent=None):
+        super(DetectionThread, self).__init__(parent)
+        self.model = model
+        self.img = img
+
+    def run(self):
+        save_path = os.path.join("temp.jpg")
+        self.img.save(save_path)
+        image_path = os.path.join("temp.jpg")
+        frame = cv2.imread(image_path)
+        results = self.model(frame)[0]
+        detections = []
+        for result in results.boxes.data.tolist():
+            x1, y1, x2, y2, score, class_id = result
+            if score > 0.5:
+                cv2.rectangle(frame, (int(x1), int(y1)), (int(x2), int(y2)), (0, 255, 0), 4)
+                cv2.putText(frame, results.names[int(class_id)].upper(), (int(x1), int(y1 - 10)),
+                            cv2.FONT_HERSHEY_SIMPLEX, 1.3, (0, 255, 0), 3, cv2.LINE_AA)
+                detections.append((x1, y1, x2, y2))
+        os.remove(image_path)
+        self.detection_finished.emit(detections)
+
+
 class ImageViewer(QWidget):
     class GraphicsView(QGraphicsView):
         def __init__(self, scene, parent):
@@ -63,6 +95,7 @@ class ImageViewer(QWidget):
             self.parent = parent  # Store the parent instance
             self.image_position = QPointF(0, 0)  # Store the position of the image
             self.chosen_rectangles = []  # Add this line to initialize the list of chosen rectangles
+            self.model_downloaded = False
 
         def scrollContentsBy(self, dx, dy):
             if self.dragMode() == QGraphicsView.DragMode.ScrollHandDrag:
@@ -173,22 +206,17 @@ class ImageViewer(QWidget):
             super().keyReleaseEvent(event)
             
         def detect_objects(self):
-        # Get the current image
-            # Save the image
-            self.img = self.parent.pixmap
-            save_path = os.path.join("temp.jpg")
-            self.img.save(save_path)
-            image_path = os.path.join("temp.jpg")
-            frame = cv2.imread(image_path)
-            results = model(frame)[0]
-            for result in results.boxes.data.tolist():
-                x1, y1, x2, y2, score, class_id = result
-                if score > 0.5:
-                    cv2.rectangle(frame, (int(x1), int(y1)), (int(x2), int(y2)), (0, 255, 0), 4)
-                    cv2.putText(frame, results.names[int(class_id)].upper(), (int(x1), int(y1 - 10)),
-                                cv2.FONT_HERSHEY_SIMPLEX, 1.3, (0, 255, 0), 3, cv2.LINE_AA)
-                    self.draw_rectangle(x1, y1, x2, y2)
-            os.remove(image_path)
+            if self.parent.pixmap.isNull():
+                self.dialog.close()
+                return
+            self.detection_thread = DetectionThread(self.model, self.parent.pixmap)
+            self.detection_thread.detection_finished.connect(self.on_detection_finished)
+            self.detection_thread.start()
+
+        def on_detection_finished(self, detections):
+            self.dialog.close()
+            for x1, y1, x2, y2 in detections:
+                self.draw_rectangle(x1, y1, x2, y2)
 
         def label_selected_rectangle(self):
             if self.chosen_rectangles:
@@ -216,11 +244,57 @@ class ImageViewer(QWidget):
                     self.parent.classes_widget.addItem(class_name)
                     self.chosen_rectangles.clear()
 
+        @pyqtSlot(object)
+        def on_download_finished(self, model):
+            self.dialog.close()
+            self.model = model
+            self.model_downloaded = True
+
+            # Stop the movie and hide the QLabel after detection
+            self.movie.stop()
+            self.loading_label.hide()
+
+            self.detect_objects()
+
+        def show_loading_dialog(self):
+            # Create a QDialog object
+            self.dialog = QDialog(self)
+            self.dialog.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
+            self.dialog.setWindowFlag(Qt.WindowType.FramelessWindowHint, True)
+            self.dialog.setWindowFlag(Qt.WindowType.WindowTransparentForInput, True)
+            self.dialog.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+
+            # Create a QLabel object
+            self.loading_label = QLabel(self.dialog)
+
+            # Create a QMovie object
+            self.movie = QMovie("/Users/omermersin/Developer/Syhme-Tools/load.gif")
+
+            # Set the movie to the QLabel
+            self.loading_label.setMovie(self.movie)
+
+            # Start the movie
+            self.movie.start()
+            layout = QVBoxLayout()
+            layout.addWidget(self.loading_label)
+            self.dialog.setLayout(layout)
+            self.dialog.show()
+
         def keyPressEvent(self, event):
             if event.key() == Qt.Key.Key_E:
                 self.label_selected_rectangle()
             if event.key() == Qt.Key.Key_W:
-                self.detect_objects()
+                if not self.model_downloaded:
+                    self.show_loading_dialog()
+
+                    # Start the download thread
+                    self.download_thread = DownloadThread()
+                    self.download_thread.download_finished.connect(self.on_download_finished)
+                    self.download_thread.start()
+                else:
+                    self.show_loading_dialog()
+                    self.detect_objects()
+
             if event.key() == Qt.Key.Key_Control:
                 self.meta_key_pressed = True
                 self.remove_ghost_lines()
@@ -446,16 +520,20 @@ class ImageViewer(QWidget):
         dialog.show()
 
     def export_yolo(self):
+        self.show_loading_dialog()
         if self.dir_path is None:
             QMessageBox.warning(self, "Warning", "First open a directory")
+            self.dialog.close()
             return
         # Select a directory to save YOLO annotations
         save_dir = QFileDialog.getExistingDirectory(self, 'Select a directory')
         if not save_dir: #save directory
+            self.dialog.close()
             return
         
         # Check if an image folder is currently opened
         if not self.dir_path: # currently open directory
+            self.dialog.close()
             return
 
         # Create a 'labels' directory within the image folder
@@ -496,10 +574,14 @@ class ImageViewer(QWidget):
         
         # Set the save location for future reference
         self.save_location = classes_file_path
+    
+        self.dialog.close()
 
     def create_config_yaml(self):
+        self.show_loading_dialog()
         if self.save_location is None:
             QMessageBox.warning(self, "Warning", "First export as YOLO")
+            self.dialog.close()
             return
         # Read classes from classes.txt
         classes = {}
@@ -518,10 +600,13 @@ class ImageViewer(QWidget):
         # Let the user choose a directory to save the config.yaml file
         dir_path = QFileDialog.getExistingDirectory(self, 'Select a directory')
         if not dir_path:
+            self.dialog.close()
             return
 
         with open(os.path.join(dir_path, 'config.yaml'), 'w') as outfile:
             yaml.dump(data, outfile, default_flow_style=False, sort_keys=False)
+
+        self.dialog.close()
 
     def draw_annotations(self):
         self.classes_widget.clear()
@@ -610,7 +695,9 @@ class ImageViewer(QWidget):
 
     def keyPressEvent(self, event):
         if event.key() == Qt.Key.Key_S:
+            self.show_loading_dialog()
             self.export_annotations()
+            self.dialog.close()
         if event.key() == Qt.Key.Key_A:
             self.show_prev_image()
         if event.key() == Qt.Key.Key_D:
@@ -673,6 +760,30 @@ class ImageViewer(QWidget):
         # Write all annotations back to the file
         with open('annotations.json', 'w') as f:
             json.dump(self.existing_annotations, f)
+
+    def show_loading_dialog(self):
+            # Create a QDialog object
+            self.dialog = QDialog(self)
+            self.dialog.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
+            self.dialog.setWindowFlag(Qt.WindowType.FramelessWindowHint, True)
+            self.dialog.setWindowFlag(Qt.WindowType.WindowTransparentForInput, True)
+            self.dialog.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+
+            # Create a QLabel object
+            self.loading_label = QLabel(self.dialog)
+
+            # Create a QMovie object
+            self.movie = QMovie("/Users/omermersin/Developer/Syhme-Tools/giphy.gif")
+
+            # Set the movie to the QLabel
+            self.loading_label.setMovie(self.movie)
+
+            # Start the movie
+            self.movie.start()
+            layout = QVBoxLayout()
+            layout.addWidget(self.loading_label)
+            self.dialog.setLayout(layout)
+            self.dialog.show()
 
 
 if __name__ == '__main__':
