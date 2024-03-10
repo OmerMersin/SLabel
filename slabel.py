@@ -274,7 +274,7 @@ class ImageViewer(QWidget):
             self.loading_label = QLabel(self.dialog)
 
             # Create a QMovie object
-            self.movie = QMovie("/Users/omermersin/Developer/Syhme-Tools/load.gif")
+            self.movie = QMovie("load.gif")
 
             # Set the movie to the QLabel
             self.loading_label.setMovie(self.movie)
@@ -562,6 +562,10 @@ class ImageViewer(QWidget):
             if annotation["filename"] in self.image_list:
 
                 class_name = annotation['class']
+                if class_name == '':
+                    QMessageBox.warning(self, "Warning", f"There are some classes that are not labeled\n{annotation["filename"]}")
+                    self.dialog.close()
+                    return
 
                 # Assign an index to the class if it's not already in the dictionary
                 if class_name not in class_to_index:
@@ -601,8 +605,12 @@ class ImageViewer(QWidget):
         classes = {}
         with open(self.save_location, 'r') as f:
             for line in f:
-                index, class_name = line.strip().split(': ')
-                classes[index] = class_name
+                try:
+                    index, class_name = line.strip().split(': ')
+                    classes[index] = class_name
+                except:
+                    QMessageBox.warning(self, "Warning", "There are some classes that are not labeled")
+                    self.dialog.close()
 
         data = {
             'path': "/path/to/dataset",
@@ -793,7 +801,7 @@ class ImageViewer(QWidget):
             self.loading_label = QLabel(self.dialog)
 
             # Create a QMovie object
-            self.movie = QMovie("/Users/omermersin/Developer/Syhme-Tools/giphy.gif")
+            self.movie = QMovie("load.gif")
 
             # Set the movie to the QLabel
             self.loading_label.setMovie(self.movie)
