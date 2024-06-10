@@ -39,20 +39,21 @@ class HoverableGraphicsRectItem(QGraphicsRectItem):
 class DownloadThread(QThread):
     download_finished = pyqtSignal(object)
 
+    def __init__(self, model_path=None, parent=None):
+        super().__init__(parent)
+        self.model_path = model_path
+
     def run(self):
         from ultralytics import YOLO
-        model_path = 'yolov8x.pt'
+        if not self.model_path:
+            self.model_path = 'yolov8x.pt'
+            if not os.path.exists(self.model_path):
+                url = 'https://github.com/ultralytics/assets/releases/download/v8.1.0/yolov8x.pt'
+                response = requests.get(url)
+                with open(self.model_path, 'wb') as f:
+                    f.write(response.content)
 
-        # Check if the model file exists locally
-        if not os.path.exists(model_path):
-            # Download the model file
-            url = 'https://github.com/ultralytics/assets/releases/download/v8.1.0/yolov8x.pt'
-            response = requests.get(url)
-            with open(model_path, 'wb') as f:
-                f.write(response.content)
-
-        # Now you can load the model
-        self.model = YOLO(model_path)
+        self.model = YOLO(self.model_path)
         self.download_finished.emit(self.model)
 
 class DetectionThread(QThread):
@@ -98,7 +99,6 @@ class ImageViewer(QWidget):
             self.parent = parent  # Store the parent instance
             self.image_position = QPointF(0, 0)  # Store the position of the image
             self.chosen_rectangles = []  # Add this line to initialize the list of chosen rectangles
-            self.model_downloaded = False
             self.mouse_toggle = None
 
         def scrollContentsBy(self, dx, dy):
@@ -215,7 +215,7 @@ class ImageViewer(QWidget):
             if self.parent.pixmap.isNull():
                 self.dialog.close()
                 return
-            self.detection_thread = DetectionThread(self.model, self.parent.pixmap)
+            self.detection_thread = DetectionThread(self.parent.model, self.parent.pixmap)
             self.detection_thread.detection_finished.connect(self.on_detection_finished)
             self.detection_thread.start()
 
@@ -253,13 +253,10 @@ class ImageViewer(QWidget):
         @pyqtSlot(object)
         def on_download_finished(self, model):
             self.dialog.close()
-            self.model = model
-            self.model_downloaded = True
-
-            # Stop the movie and hide the QLabel after detection
+            self.parent.model = model
+            self.parent.model_downloaded = True
             self.movie.stop()
             self.loading_label.hide()
-
             self.detect_objects()
 
         def show_loading_dialog(self):
@@ -290,7 +287,7 @@ class ImageViewer(QWidget):
             if event.key() == Qt.Key.Key_E:
                 self.label_selected_rectangle()
             if event.key() == Qt.Key.Key_W:
-                if not self.model_downloaded:
+                if not self.parent.model_downloaded:
                     self.show_loading_dialog()
 
                     # Start the download thread
@@ -414,6 +411,7 @@ class ImageViewer(QWidget):
         super().__init__()
         self.pixmap = QPixmap()
         self.is_new_picture = True
+        self.model_downloaded = False
         
 
         self.layout = QHBoxLayout()
@@ -444,6 +442,10 @@ class ImageViewer(QWidget):
         self.export_button = QPushButton('Export Annotations')
         self.export_button.clicked.connect(self.export_annotations)
 
+        self.choose_model_button = QPushButton('Choose Model')
+        self.choose_model_button.clicked.connect(self.choose_model)
+
+
         self.v_layout.addWidget(self.zoom_in_button)
         self.v_layout.addWidget(self.zoom_out_button)
 
@@ -451,6 +453,8 @@ class ImageViewer(QWidget):
         self.v_layout.addWidget(self.prev_button)
         self.v_layout.addWidget(self.next_button)
         self.v_layout.addWidget(self.export_button)
+
+        self.v_layout.addWidget(self.choose_model_button)
 
         self.scene = QGraphicsScene()
         self.view = self.GraphicsView(self.scene, self)
@@ -508,6 +512,28 @@ class ImageViewer(QWidget):
 
     def toggle_save_mode(self):
         self.save_mode = self.save_mode_checkbox.isChecked()
+
+    def choose_model(self):
+        file_dialog = QFileDialog(self)
+        file_dialog.setNameFilter("PyTorch Model Files (*.pt)")
+        if file_dialog.exec():
+            model_path = file_dialog.selectedFiles()[0]
+            self.load_model(model_path)
+
+    def load_model(self, model_path):
+        self.show_loading_dialog()
+        self.download_thread = DownloadThread(model_path=model_path)
+        self.download_thread.download_finished.connect(self.on_download_finished)
+        self.download_thread.start()
+
+    @pyqtSlot(object)
+    def on_download_finished(self, model):
+        self.dialog.close()
+        self.model = model
+        self.model_downloaded = True
+        self.movie.stop()
+        self.loading_label.hide()
+        # self.detect_objects()
 
     def show_shortcut_info(self):
         dialog = MovableDialog(self)
